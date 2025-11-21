@@ -1,0 +1,32 @@
+# Ignore virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+dist/
+build/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Application specific
+youtube_cookies.txt
+temp/
+cache/
+*.log
