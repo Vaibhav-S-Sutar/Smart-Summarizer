@@ -150,8 +150,8 @@ def _extract_with_stable_client(video_url: str, download: bool, extra_opts: Opti
                 "skip": ["dash", "hls"],
             }
         },
-        "retries": 2,  # Reduced for free tier
-        "fragment_retries": 2,
+        "retries": 3,  # Increased retries
+        "fragment_retries": 3,
         "socket_timeout": YTDLP_SOCKET_TIMEOUT,
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -159,17 +159,20 @@ def _extract_with_stable_client(video_url: str, download: bool, extra_opts: Opti
             "Accept-Language": "en-us,en;q=0.5",
             "Sec-Fetch-Mode": "navigate",
         },
-        "ignoreerrors": True,  # Continue on errors
+        "ignoreerrors": False,  # Get proper error messages
         "extract_flat": False,
+        "no_check_certificate": True,  # Bypass SSL issues
     }
     if YTDLP_COOKIES: ydl_opts["cookiefile"] = YTDLP_COOKIES
     if extra_opts: ydl_opts.update(extra_opts)
     
-    # Try multiple strategies (reduced for faster failover)
+    # Try multiple strategies with more options
     strategies = [
-        {"player_client": ["android"]},  # Fastest
-        {"player_client": ["ios"]},
-        {"player_client": ["web"]},
+        {"player_client": ["android"], "skip": ["dash"]},  # Fastest, most reliable
+        {"player_client": ["ios"], "skip": ["dash"]},
+        {"player_client": ["web"], "skip": []},
+        {"player_client": ["android_embedded"], "skip": ["dash"]},  # Added fallback
+        {"player_client": ["web_embedded"], "skip": []},  # Added fallback
     ]
     
     last_error = None
@@ -179,7 +182,7 @@ def _extract_with_stable_client(video_url: str, download: bool, extra_opts: Opti
             ydl_opts["extractor_args"]["youtube"].update(strategy)
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(video_url, download=download)
-                if info:
+                if info and (info.get("title") or info.get("description")):
                     log(f"✓ Extraction successful with strategy: {strategy['player_client']}")
                     return info
         except Exception as e:
@@ -187,12 +190,13 @@ def _extract_with_stable_client(video_url: str, download: bool, extra_opts: Opti
             last_error = e
             log(f"✗ Strategy {strategy['player_client']} failed: {str(e)[:100]}")
             
-            # Don't retry on these errors
-            if "private video" in error_str or "video unavailable" in error_str:
+            # Don't retry on these specific errors
+            if "private video" in error_str or "this video is unavailable" in error_str:
                 raise
             
             # Try next strategy
             if idx < len(strategies) - 1:
+                time.sleep(1)  # Brief pause between strategies
                 continue
     
     # All strategies failed
