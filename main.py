@@ -26,12 +26,11 @@ from youtube_transcript_api import YouTubeTranscriptApi
 import yt_dlp, pdfplumber, google.generativeai as genai, requests
 from dotenv import load_dotenv
 
-# ---------------- Global Safe-Mode Timeouts (Optimized for Render Free Tier) ----------------
-REQUEST_TIMEOUT = 20  # Reduced for free tier
-YTDLP_SOCKET_TIMEOUT = 10  # Faster timeout
+# ---------------- Global Safe-Mode Timeouts ----------------
+REQUEST_TIMEOUT = 30
+YTDLP_SOCKET_TIMEOUT = 15
 YTDLP_RETRIES = 1
-HLS_SEGMENT_LIMIT = 30  # Reduced to save memory
-MAX_CONCURRENT_REQUESTS = 10  # Limit concurrent requests
+HLS_SEGMENT_LIMIT = 50
 
 # ---------------- Setup ----------------
 load_dotenv()
@@ -47,12 +46,7 @@ if GEMINI_KEY:
     except Exception as e:
         print("Warning: genai.configure() failed:", e)
 
-app = FastAPI(
-    title="Smart Summarizer (Render Free Tier Optimized)", 
-    version="1.3.2",
-    docs_url=None,  # Disable docs in production to save memory
-    redoc_url=None
-)
+app = FastAPI(title="Smart Summarizer (robust cloud)", version="1.2.9")
 
 app.add_middleware(
     CORSMiddleware,
@@ -98,11 +92,13 @@ def try_transcript_api(video_id: str, video_url: Optional[str] = None) -> Option
     - Prefers English, but falls back to any available language.
     """
     try:
-        log("Attempting YouTubeTranscriptApi (free tier optimized)...")
+        log("Attempting YouTubeTranscriptApi (optimized universal)...")
         transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
 
-        # Simplified English detection for faster execution
-        english_variants = ["english", "en", "en-us", "en-gb"]
+        english_variants = [
+            "english", "en", "en-us", "en-gb", "en-in",
+            "english (auto-generated)", "english (us)", "english (uk)", "english (india)"
+        ]
 
         english_matches, others = [], []
         for t in transcripts:
@@ -113,33 +109,30 @@ def try_transcript_api(video_id: str, video_url: Optional[str] = None) -> Option
             else:
                 others.append(t)
 
-        # Try English first (max 3 variants), then first non-English
-        all_attempts = english_matches[:3] + others[:1]
-        
-        for idx, t in enumerate(all_attempts):
-            try:
-                log(f"Fetching transcript {idx+1}/{len(all_attempts)}: {t.language} ({t.language_code})")
-                fetched = t.fetch()
-                if fetched:
-                    text = " ".join(seg.get("text", "") for seg in fetched if seg.get("text"))
-                    if text.strip():
-                        log(f"✓ Transcript fetched successfully: {t.language}")
-                        return text
-            except Exception as e:
-                if "no element found" in str(e).lower():
-                    log("Transcript XML empty (likely HLS) — skipping")
-                    return None
-                log(f"✗ Transcript fetch attempt {idx+1} failed: {str(e)[:80]}")
+        for group, label in [(english_matches, "English"), (others, "non-English")]:
+            for t in group:
+                try:
+                    fetched = t.fetch()
+                    if fetched:
+                        text = " ".join(seg.get("text", "") for seg in fetched if seg.get("text"))
+                        if text.strip():
+                            log(f"Fetched {label} transcript ({t.language}, {t.language_code})")
+                            return text
+                except Exception as e:
+                    if "no element found" in str(e).lower():
+                        log("Transcript XML empty (likely HLS) — skipping.")
+                        return None
+                    else:
+                        log(f"{label} transcript fetch failed: {e}")
 
     except Exception as e:
-        log(f"✗ YouTubeTranscriptApi failed: {str(e)[:100]}")
+        log(f"YouTubeTranscriptApi optimized fetch failed: {e}")
 
     return None
 
 
 # ---------------- yt-dlp Wrapper ----------------
 def _extract_with_stable_client(video_url: str, download: bool, extra_opts: Optional[dict] = None):
-    """Optimized for Render free tier with reduced timeouts and memory usage"""
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
@@ -150,54 +143,42 @@ def _extract_with_stable_client(video_url: str, download: bool, extra_opts: Opti
                 "skip": ["dash", "hls"],
             }
         },
-        "retries": 2,  # Reduced for free tier
-        "fragment_retries": 2,
-        "socket_timeout": YTDLP_SOCKET_TIMEOUT,
+        "retries": 3,
+        "fragment_retries": 3,
+        "socket_timeout": 30,
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-us,en;q=0.5",
             "Sec-Fetch-Mode": "navigate",
         },
-        "ignoreerrors": True,  # Continue on errors
-        "extract_flat": False,
     }
     if YTDLP_COOKIES: ydl_opts["cookiefile"] = YTDLP_COOKIES
     if extra_opts: ydl_opts.update(extra_opts)
     
-    # Try multiple strategies (reduced for faster failover)
+    # Try multiple strategies
     strategies = [
-        {"player_client": ["android"]},  # Fastest
+        {"player_client": ["android", "web"]},
         {"player_client": ["ios"]},
-        {"player_client": ["web"]},
+        {"player_client": ["mweb"]},
+        {"player_client": ["tv_embedded"]},
     ]
     
-    last_error = None
-    for idx, strategy in enumerate(strategies):
+    for strategy in strategies:
         try:
-            log(f"Trying extraction strategy {idx+1}/{len(strategies)}: {strategy['player_client']}")
             ydl_opts["extractor_args"]["youtube"].update(strategy)
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(video_url, download=download)
-                if info:
-                    log(f"✓ Extraction successful with strategy: {strategy['player_client']}")
-                    return info
+                return ydl.extract_info(video_url, download=download)
         except Exception as e:
             error_str = str(e).lower()
-            last_error = e
-            log(f"✗ Strategy {strategy['player_client']} failed: {str(e)[:100]}")
-            
-            # Don't retry on these errors
-            if "private video" in error_str or "video unavailable" in error_str:
+            if "sign in" in error_str or "bot" in error_str:
+                log(f"Bot detection with {strategy}, trying next strategy...")
+                continue
+            elif strategy == strategies[-1]:
                 raise
-            
-            # Try next strategy
-            if idx < len(strategies) - 1:
+            else:
                 continue
     
-    # All strategies failed
-    if last_error:
-        raise last_error
     raise Exception("All extraction strategies failed")
 
 def _subtitle_to_plain(s: str) -> str:
@@ -218,14 +199,18 @@ def _subtitle_to_plain(s: str) -> str:
     return " ".join(lines)
 
 def try_ytdlp_subtitles(video_url: str) -> Optional[str]:
-    """Optimized for Render free tier - prefer English captions with early bailout."""
-    log("Attempting yt_dlp subtitle extraction (optimized)...")
+    """Prefer English captions first, otherwise use any available language."""
+    log("Attempting yt_dlp subtitle extraction (enhanced)...")
     start = time.time()
 
     def is_english_label(label: str) -> bool:
         if not label:
             return False
         lbl = label.lower()
+        # Match ANY English variant:
+        # - "English", "English (US)", "English - CC", "English (auto-generated)"
+        # - "en", "en-US", "en-GB", "en_in"
+        # - "eng"
         return (
             "english" in lbl or
             re.match(r"^en([\-_][a-z]+)?$", lbl) is not None or
@@ -252,50 +237,44 @@ def try_ytdlp_subtitles(video_url: str) -> Optional[str]:
             else:
                 other_candidates.extend(items)
 
-        # Priority: English -> other languages
+        # Priority: English -> other languages -> anything
         if english_candidates:
-            candidates = english_candidates[:3]  # Limit to first 3 for free tier
+            candidates = english_candidates
         elif other_candidates:
-            candidates = other_candidates[:2]  # Limit to first 2
+            candidates = other_candidates
         else:
             candidates = []
-            for v in list(all_tracks.values())[:2]:  # Max 2 fallback attempts
+            for v in all_tracks.values():
                 if isinstance(v, list):
-                    candidates.extend(v[:1])
+                    candidates.extend(v)
 
-        for idx, cand in enumerate(candidates):
-            # Early timeout check
-            if time.time() - start > REQUEST_TIMEOUT * 0.8:  # Use 80% of timeout
-                log("Subtitle extraction timeout approaching, stopping early")
+        for cand in candidates:
+            if time.time() - start > REQUEST_TIMEOUT:
                 break
-            
             url = cand.get("url")
             if not url:
                 continue
-            
             try:
                 headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                     "Accept-Language": "en-US,en;q=0.9",
                 }
-                r = requests.get(url, timeout=REQUEST_TIMEOUT // 2, headers=headers)  # Halve timeout per request
+                r = requests.get(url, timeout=REQUEST_TIMEOUT, headers=headers)
                 if r.status_code == 200 and r.text.strip():
                     text = r.text
 
                     # HLS playlist?
                     if text.lstrip().startswith("#EXTM3U"):
-                        log("Detected HLS (.m3u8) subtitle playlist; fetching limited segments...")
+                        log("Detected HLS (.m3u8) subtitle playlist; fetching segments...")
                         lines = text.splitlines()
                         segs = [
                             urllib.parse.urljoin(url, ln.strip())
                             for ln in lines if ln and not ln.startswith("#")
                         ]
                         collected = []
-                        # Limit segments for memory efficiency
-                        max_segs = min(HLS_SEGMENT_LIMIT, 20)
-                        for seg in segs[:max_segs]:
+                        for seg in segs[:HLS_SEGMENT_LIMIT]:
                             try:
-                                rs = requests.get(seg, timeout=5)  # 5s per segment
+                                rs = requests.get(seg, timeout=REQUEST_TIMEOUT)
                                 if rs.status_code == 200:
                                     content = rs.content.decode("utf-8", errors="ignore")
                                     cleaned = _subtitle_to_plain(content)
@@ -304,22 +283,21 @@ def try_ytdlp_subtitles(video_url: str) -> Optional[str]:
                             except Exception as e:
                                 log(f"Segment fetch failed: {e}")
                         if collected:
-                            log(f"✓ Fetched {len(collected)} HLS subtitle segments")
+                            log(f"Fetched {len(collected)} HLS subtitle segments.")
                             return " ".join(collected)
                         continue
 
                     # Normal VTT/SRT text
                     cleaned = _subtitle_to_plain(text)
                     if cleaned.strip():
-                        log(f"✓ yt_dlp subtitle fetch succeeded (candidate {idx+1})")
+                        log("yt_dlp subtitle fetch succeeded.")
                         return cleaned
             except Exception as e:
-                log(f"✗ Subtitle fetch attempt {idx+1} failed: {str(e)[:80]}")
-                continue
+                log(f"Subtitle fetch failed: {e}")
 
-        log("No usable subtitles found via yt_dlp")
+        log("No usable subtitles found via yt_dlp.")
     except Exception as e:
-        log(f"✗ yt_dlp subtitle extraction failed: {str(e)[:100]}")
+        log(f"yt_dlp subtitle extraction failed: {e}")
 
     return None
 
@@ -440,13 +418,13 @@ def summarize_via_gemini(text: str, summary_type: str = "short",
 
     model = genai.GenerativeModel("gemini-2.0-flash")
 
-    # -------- Optimized Chunking for Free Tier --------
+    # -------- Optimized Chunking --------
     text = text.strip()
     text_len = len(text)
 
-    MAX_SAFE_CHUNK = 80000  # Reduced for 512MB RAM constraint
-    overlap = 300  # Reduced overlap
-    max_chunks = 2  # Limit to 2 chunks max
+    MAX_SAFE_CHUNK = 120000  # Increased for better context
+    overlap = 500
+    max_chunks = 2
 
     if text_len <= MAX_SAFE_CHUNK:
         chunks = [text]
