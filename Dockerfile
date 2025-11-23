@@ -20,15 +20,13 @@ COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip install --upgrade pip && \
-    pip install -r requirements.txt && \
-    pip install gunicorn
+    pip install -r requirements.txt
 
 # Copy application files
 COPY main.py .
 COPY index.html .
 COPY script.js .
 COPY styles.css .
-COPY .env.example .
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
@@ -37,5 +35,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 # Expose port
 EXPOSE 8000
 
-# Start application
-CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:8000", "--timeout", "300", "main:app"]
+# Start application with uvicorn (optimized for Render free tier)
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--timeout-keep-alive", "75"]

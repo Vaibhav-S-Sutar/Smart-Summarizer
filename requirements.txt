@@ -1,14 +1,20 @@
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-yt-dlp==2023.11.16
-youtube-transcript-api==0.6.1
-pdfplumber==0.10.4
-google-generativeai==0.3.0
-python-dotenv==1.0.0
-requests==2.31.0
-python-multipart==0.0.6
-aiofiles==23.2.1
+# Core dependencies
+fastapi==0.115.0
+uvicorn==0.30.0
+yt-dlp==2024.8.6
+youtube-transcript-api==0.6.2
+pdfplumber==0.11.0
+google-generativeai==0.8.0
+python-dotenv==1.0.1
+requests==2.32.3
+python-multipart==0.0.9
+aiofiles==24.1.0
 
 # Required for Render deployment
 websockets==12.0
-httptools==0.6.1
+gunicorn==22.0.0
+
+# Optional performance packages (install if available, skip if build fails)
+# These are optional and uvicorn will work without them
+watchfiles==0.21.0
+python-dotenv==1.0.1

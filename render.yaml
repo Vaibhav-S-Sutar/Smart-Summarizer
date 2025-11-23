@@ -3,14 +3,14 @@ services:
     name: smart-summarizer
     runtime: python
     plan: free
-    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1 --timeout-keep-alive 75 --limit-concurrency 10
+    buildCommand: pip install --upgrade pip setuptools wheel && pip install --no-cache-dir -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1 --timeout-keep-alive 75 --limit-concurrency 10 --limit-max-requests 100
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
       - key: GEMINI_API_KEY
         sync: false
-      - key: PORT
-        value: 10000
     healthCheckPath: /health
     autoDeploy: true
+    region: oregon
+    maxShutdownDelaySeconds: 5

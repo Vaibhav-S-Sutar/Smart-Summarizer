@@ -1,5 +1,5 @@
 // API Configuration
-const API_BASE_URL = window.location.origin;
+const API_BASE_URL = 'https://smart-summarizer-1-njog.onrender.com';
 
 // DOM Elements
 let currentTab = 'youtube';
